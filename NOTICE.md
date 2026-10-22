@@ -20,11 +20,11 @@
 
 ---
 
-## 二、⚠️ 方案 A（合并版 APK）是对上游作品的修改版本
+## 二、⚠️ 本项目产物是对上游作品的修改版本
 
 这一节是 GPL-3.0 **§5(a)** 要求的「显著修改声明」，请勿删除。
 
-**`merged/` 目录下的产物（`clipcascade-merged.apk`）是在上游 ClipCascade 手机端 APK 基础上修改得到的二进制，
+**本仓库 `merged/build.sh` 的产物（`clipcascade-merged.apk`）是在上游 ClipCascade 手机端 APK 基础上修改得到的二进制，
 属于 GPL-3.0 意义上的修改版本（modified version），不是独立作品。**
 
 | 项 | 内容 |
@@ -41,8 +41,8 @@
 | 1 | 新增 `classes3.dex` | 编入 `merged/src/com/jay/ccbridge/BridgeProvider.java`，本仓库原创 |
 | 2 | `AndroidManifest.xml` 增加一个 `<provider>` | 声明 `com.jay.ccbridge.BridgeProvider`，用于进程启动钩子 |
 | 3 | 新增 `assets/clip.dex` | 本仓库原创的剪贴板读取载荷（源码 `src/Clip.java`） |
-| 4 | `versionName` / `versionCode` 追加后缀 | 改为 `1.0-ccbridge` / 提升 code，便于区分官方版 |
-| 5 | 重新签名 | 使用本仓库自签密钥（`lsposed-hook/keystore.jks`），**与原版签名不同** |
+| 4 | `versionName` / `versionCode` 改写 | 形如 `1.0-ccbridge`（CI 产物为 `ccbridge.<上游tag>`），便于区分官方版 |
+| 5 | 重新签名 | 使用本仓库自签密钥（`keystore/ccbridge.jks`），**与原版签名不同** |
 
 上游的 `classes.dex`、`classes2.dex`、`assets/index.android.bundle`、`lib/`、`res/`、`resources.arsc` 均**逐字节保留原样**，
 可通过 `merged/build.sh` 从官方 APK 重新构建并比对验证。
@@ -55,9 +55,9 @@ GPL-3.0 要求分发二进制时提供**对应源码**（Corresponding Source）
 |---|---|
 | 我们新增的全部代码 | 本仓库：`merged/src/`、`src/Clip.java`、`merged/build.sh`、`scripts/build-dex.sh` |
 | 上游原有部分 | 上游仓库 https://github.com/Sathvik-Rao/ClipCascade （release `3.2.0`），未作修改 |
-| 复现完整产物 | `cd merged && ./build.sh <官方APK> out/apk` —— 9 秒可复现，无需任何私有材料 |
+| 复现完整产物 | `cd merged && ./build.sh <官方APK> out/apk` —— 约 9 秒可复现，无需任何私有材料 |
 
-即：任何人拿「上游官方 APK + 本仓库」就能重建出完全等价的产物。
+即：任何人拿「上游官方 APK + 本仓库」就能重建出等价的产物。
 
 ---
 
@@ -67,15 +67,14 @@ GPL-3.0 要求分发二进制时提供**对应源码**（Corresponding Source）
 
 | 路径 | 说明 |
 |---|---|
+| `merged/src/com/jay/ccbridge/BridgeProvider.java` | 进程内桥接：启动钩子、dex 自愈部署、ReactContext 等待、常驻轮询、事件回注 |
 | `src/Clip.java` | 反射调用 `IClipboard` 的 `app_process` 载荷（`read` / `write` / `poll` / `diag`） |
-| `prebuilt/clip.dex` | 上述 `Clip.java` 的编译产物 |
-| `src/phone_bridge.py` | 方案 C 的桌面端桥接守护进程（设备发现、流消费、剪贴板写入、脱敏日志） |
-| `systemd/clipcascade-phone-bridge.service` | 方案 C 的 systemd 用户单元 |
-| `lsposed-hook/src/com/jay/cchook/MainHook.java` | 方案 B 的 LSPosed 模块（modern libxposed API 102） |
-| `merged/src/com/jay/ccbridge/BridgeProvider.java` | 方案 A 的进程内桥接 |
-| `scripts/build-dex.sh`、`merged/build.sh`、`lsposed-hook/build.sh` | 构建脚本 |
-| `merged/`、`lsposed-hook/` 下的 `META-INF/`、`assets/`、`AndroidManifest.xml` | 模块/补丁元信息 |
-| `README.md`、`NOTICE.md`、`DISCLAIMER.md`、`docs/*`、各子目录 README | 文档 |
+| `prebuilt/clip.dex` | 上述 `Clip.java` 的编译产物（构建材料，会被打进 APK 的 `assets/`） |
+| `merged/build.sh` | 合并、重打包、对齐、签名的构建脚本 |
+| `scripts/build-dex.sh` | 不依赖 Android Studio 的 `clip.dex` 构建脚本 |
+| `scripts/verify-merged.sh` | 产物静态冒烟检查（provider / 符号 / 对齐） |
+| `.github/workflows/upstream-sync.yml` | 跟进上游发版的自动构建流水线 |
+| `README.md`、`NOTICE.md`、`DISCLAIMER.md`、`docs/*`、`merged/README.md` | 文档 |
 
 ---
 
@@ -85,28 +84,23 @@ GPL-3.0 要求分发二进制时提供**对应源码**（Corresponding Source）
 
 | 组件 | 许可证 | 用途 |
 |---|---|---|
-| `prebuilt/clip.dex`、`lsposed-hook/prebuilt/cchook.apk` | GPL-3.0（本仓库授权） | 预编译产物，源码见上一节 |
+| `prebuilt/clip.dex` | GPL-3.0（本仓库授权） | 预编译产物，源码见上一节 |
 
-### 运行时 / 构建期依赖（**不随本仓库分发**）
+### 构建期 / 运行时依赖（**不随本仓库分发**）
 
 | 组件 | 许可证 | 用途 |
 |---|---|---|
-| Android SDK `build-tools` / `platform`（`android.jar`） | Android SDK License / Apache-2.0（AOSP 部分） | 编译期，由脚本从 Google 官方源按需下载 |
+| Android SDK `build-tools` / `platform`（`android.jar`） | Android SDK License / Apache-2.0（AOSP 部分） | 编译期，由 CI 与脚本从 Google 官方源下载 |
 | AOSP `IClipboard` / `ClipboardService` 接口 | Apache-2.0 | 运行时以**反射**调用，非静态链接 |
-| [libxposed/api](https://github.com/libxposed/api) | Apache-2.0 | 方案 B 编译期依赖 |
-| [LSPosed](https://github.com/LSPosed/LSPosed) | GPL-3.0 | 方案 B 运行时框架 |
-| [Apktool](https://github.com/iBotPeaches/Apktool) | Apache-2.0 | 方案 A 重打包工具 |
-| [KernelSU](https://github.com/tiann/KernelSU) / SukiSU | GPL-3.0 | 提供 `su`（方案 A / B） |
-| `wl-clipboard` | GPL-3.0 | 方案 C 桌面剪贴板（Wayland） |
-| `xclip` | GPL-2.0 | 方案 C 桌面剪贴板（X11 备用） |
-| `android-tools`（`adb`） | Apache-2.0 | 方案 C 传输通道 |
-| Python 标准库 | PSF License | 方案 C 运行时 |
+| [Apktool](https://github.com/iBotPeaches/Apktool) | Apache-2.0 | 重打包工具 |
+| [KernelSU](https://github.com/tiann/KernelSU) / SukiSU | GPL-3.0 | 提供 `su` |
+| GitHub Actions runner 组件 | 各自许可 | CI |
 
 ---
 
 ## 五、GPL-3.0 合规提示
 
-若你分发本仓库的**修改版本**或**二进制形式**（包括把 `clipcascade-merged.apk`、`clip.dex`、`cchook.apk` 打进你的发行包）：
+若你分发本仓库的**修改版本**或**二进制形式**（包括把 `clipcascade-merged.apk`、`clip.dex` 打进你的发行包）：
 
 1. 必须保留本 `NOTICE.md` 与 `LICENSE`；
 2. 必须以 GPL-3.0 授权你的修改，并提供对应**完整源代码**及可用的构建方式；
@@ -137,9 +131,8 @@ GPL-3.0 要求分发二进制时提供**对应源码**（Corresponding Source）
 ## 八、致谢
 
 - **Sathvik Rao** 与 ClipCascade 贡献者 —— 本项目只是给上游作品接回它在较新 Android 上断掉的一条腿。
-- **AOSP** `ClipboardService` / `IClipboard` 的维护者 —— 对 `SHELL_UID` 的硬编码放行是全部方案的立足点。
-- **libxposed**、**LSPosed**、**Apktool**、**KernelSU** 的作者与维护者 —— 没有这些工具链，方案 A / B 无法实现。
-- **wl-clipboard** / **xclip** / **android-tools** —— 方案 C 的运行时基础。
+- **AOSP** `ClipboardService` / `IClipboard` 的维护者 —— 对 `SHELL_UID` 的硬编码放行是本案的立足点。
+- **Apktool**、**KernelSU** 的作者与维护者 —— 没有这些工具链，本项目无法实现。
 
 ---
 

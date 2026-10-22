@@ -1,0 +1,288 @@
+name: upstream-sync
+
+# 跟进上游 ClipCascade 发版，自动重新合并 APK 并发布 Release。
+#
+# 流程：check（比对上游 tag 与本仓库 upstream-* 标签）
+#       -> build（下载官方 APK、合并、静态校验）
+#       -> release（打标签、发 Release、附三个产物）
+# 失败时自动开 issue，避免「上游改了结构、流水线静默挂掉」。
+
+on:
+  schedule:
+    # 每天 03:00 / 15:00 UTC（北京时间 11:00 / 23:00）
+    - cron: "0 3,15 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "即使已经发布过该上游版本，也强制重建"
+        type: boolean
+        default: false
+      upstream_tag:
+        description: "指定上游 tag（留空则用 latest）"
+        type: string
+        default: ""
+  push:
+    branches: [main]
+    paths:
+      - "merged/**"
+      - "prebuilt/clip.dex"
+      - "scripts/verify-merged.sh"
+      - ".github/workflows/upstream-sync.yml"
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+
+env:
+  UPSTREAM_REPO: Sathvik-Rao/ClipCascade
+  UPSTREAM_ASSET: ClipCascade.apk
+  APKTOOL_VERSION: "3.0.3"
+
+jobs:
+  check:
+    name: 检查上游版本
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+      tag: ${{ steps.meta.outputs.tag }}
+      apk_url: ${{ steps.meta.outputs.apk_url }}
+      version_name: ${{ steps.meta.outputs.version_name }}
+      version_code: ${{ steps.meta.outputs.version_code }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 获取上游最新 release
+        id: meta
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.upstream_tag }}" ]; then
+            API="https://api.github.com/repos/$UPSTREAM_REPO/releases/tags/${{ inputs.upstream_tag }}"
+          else
+            API="https://api.github.com/repos/$UPSTREAM_REPO/releases/latest"
+          fi
+
+          curl -sSL --retry 3 -H "Accept: application/vnd.github+json" "$API" -o rel.json
+          TAG=$(jq -r '.tag_name // empty' rel.json)
+          APK_URL=$(jq -r --arg n "$UPSTREAM_ASSET" \
+            '.assets[] | select(.name==$n) | .browser_download_url' rel.json | head -1)
+
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            echo "::error::无法获取上游 tag"; cat rel.json | head -40; exit 1
+          fi
+          if [ -z "$APK_URL" ] || [ "$APK_URL" = "null" ]; then
+            echo "::warning::上游 release $TAG 里没有 $UPSTREAM_ASSET，跳过"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "apk_url=$APK_URL" >> "$GITHUB_OUTPUT"
+
+          # 产物版本号：跟随上游，避免自己的版本号与上游混淆
+          #   versionName 形如 1.0-ccbridge.3.2.0
+          #   versionCode 用日期+运行号，保证单调递增、可覆盖安装
+          VC=$(( $(date -u +%y%m%d) * 100 + GITHUB_RUN_NUMBER % 100 ))
+          echo "version_name=ccbridge.$TAG" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VC" >> "$GITHUB_OUTPUT"
+
+      - name: 判断是否需要构建
+        id: decide
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.meta.outputs.tag }}"
+          FORCE="${{ inputs.force }}"
+          if [ "$FORCE" = "true" ]; then
+            echo "强制重建：$TAG"; echo "build=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # 已发布过 upstream-<tag> 就不再重复
+          if git ls-remote --tags origin "refs/tags/upstream-$TAG" | grep -q .; then
+            echo "已存在 upstream-$TAG，跳过"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "新版本：$TAG"
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: 合并 APK
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: 安装依赖
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq unzip zipalign 2>/dev/null || sudo apt-get install -y -qq unzip
+
+      - name: 准备 Android SDK 与 apktool
+        run: |
+          set -euo pipefail
+          BASE="https://dl.google.com/android/repository"
+          mkdir -p "$RUNNER_TEMP/sdk"
+
+          curl -sSL --retry 3 -o "$RUNNER_TEMP/bt.zip" "$BASE/build-tools_r36_linux.zip"
+          unzip -q -o "$RUNNER_TEMP/bt.zip" -d "$RUNNER_TEMP/sdk/bt"
+          echo "BUILD_TOOLS=$(find -L "$RUNNER_TEMP/sdk/bt" -maxdepth 1 -mindepth 1 -type d | head -1)" >> "$GITHUB_ENV"
+
+          curl -sSL --retry 3 -o "$RUNNER_TEMP/pf.zip" "$BASE/platform-36_r02.zip"
+          unzip -q -o "$RUNNER_TEMP/pf.zip" -d "$RUNNER_TEMP/sdk/pf"
+          echo "ANDROID_JAR=$(find -L "$RUNNER_TEMP/sdk/pf" -name android.jar | head -1)" >> "$GITHUB_ENV"
+
+          curl -sSL --retry 3 -o "$RUNNER_TEMP/apktool.jar" \
+            "https://github.com/iBotPeaches/Apktool/releases/download/v$APKTOOL_VERSION/apktool_$APKTOOL_VERSION.jar"
+          echo "APKTOOL_JAR=$RUNNER_TEMP/apktool.jar" >> "$GITHUB_ENV"
+
+      - name: 下载上游 APK
+        run: |
+          set -euo pipefail
+          URL="${{ needs.check.outputs.apk_url }}"
+          if [ -z "$URL" ]; then
+            URL="https://github.com/$UPSTREAM_REPO/releases/download/${{ needs.check.outputs.tag }}/$UPSTREAM_ASSET"
+          fi
+          curl -sSL --retry 3 -o "$RUNNER_TEMP/upstream.apk" "$URL"
+          ls -lh "$RUNNER_TEMP/upstream.apk"
+
+      - name: 合并
+        env:
+          VERSION_NAME: ${{ needs.check.outputs.version_name }}
+          VERSION_CODE: ${{ needs.check.outputs.version_code }}
+        run: |
+          set -euo pipefail
+          cd merged
+          ./build.sh "$RUNNER_TEMP/upstream.apk" "$RUNNER_TEMP/out/clipcascade-merged.apk"
+          chmod +x ../scripts/verify-merged.sh
+          ../scripts/verify-merged.sh "$RUNNER_TEMP/out/clipcascade-merged.apk"
+
+      - name: 校验和
+        run: |
+          cd "$RUNNER_TEMP/out"
+          md5sum clipcascade-merged.apk | tee md5.txt
+          sha256sum clipcascade-merged.apk | tee sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: merged-apk
+          path: |
+            ${{ runner.temp }}/out/clipcascade-merged.apk
+            ${{ runner.temp }}/out/md5.txt
+            ${{ runner.temp }}/out/sha256.txt
+          retention-days: 14
+
+  release:
+    name: 发布 Release
+    needs: [check, build]
+    if: needs.check.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: merged-apk
+          path: dist
+
+      - name: 生成 release notes
+        env:
+          TAG: ${{ needs.check.outputs.tag }}
+          VNAME: ${{ needs.check.outputs.version_name }}
+          VCODE: ${{ needs.check.outputs.version_code }}
+        run: |
+          set -euo pipefail
+          MD5=$(cut -d' ' -f1 dist/md5.txt)
+          SHA=$(cut -d' ' -f1 dist/sha256.txt)
+          cat > notes.md <<EOF
+          ## 自动跟进上游 \`$TAG\`
+
+          本版本由 GitHub Actions 自动生成：拉取官方 [ClipCascade $TAG](https://github.com/Sathvik-Rao/ClipCascade/releases/tag/$TAG)
+          的 \`ClipCascade.apk\`，合并后台剪贴板桥后重新签名。\`versionName=$VNAME\`，\`versionCode=$VCODE\`。
+
+          ### 附件
+
+          | 文件 | 说明 |
+          |---|---|
+          | \`clipcascade-merged.apk\` | 已合并好的完整 App，装完只有一个软件包 |
+
+          ### 校验和
+
+          \`\`\`
+          $MD5  clipcascade-merged.apk
+          $SHA  clipcascade-merged.apk (sha256)
+          \`\`\`
+
+          ### 安装
+
+          \`\`\`bash
+          adb uninstall com.clipcascade      # 签名与官方不同，必须先卸载
+          adb install clipcascade-merged.apk
+          \`\`\`
+
+          想保留登录态与加密密钥，先备份数据再迁移；uid 会变，注意 \`chown\` / \`chcon\`。
+          完整步骤见 [merged/README.md](https://github.com/${{ github.repository }}/blob/main/merged/README.md)。
+
+          **装完必做**：到「设置 → 应用管理 → ClipCascade → 自启动」打开（重装会重置白名单）。
+
+          ### 许可与免责
+
+          - 本仓库代码以 **GPL-3.0** 授权，与上游一致。致谢与归属见
+            [NOTICE.md](https://github.com/${{ github.repository }}/blob/main/NOTICE.md)。
+          - **\`clipcascade-merged.apk\` 是对上游 APK 的修改版本**（modified version），
+            修改者 FairyJJ，逐条改动见 NOTICE.md 第二节。它不是官方发布物，
+            **与上游无隶属或背书关系**。
+          - 按「现状」提供，不附带任何担保。使用前请读
+            [DISCLAIMER.md](https://github.com/${{ github.repository }}/blob/main/DISCLAIMER.md)。
+          - **请勿**就本项目的问题到上游仓库提 issue。
+          EOF
+          sed -i 's/^          //' notes.md
+          cat notes.md
+
+      - name: 打标签并发布
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.check.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git tag -f "upstream-$TAG"
+          git push -f origin "refs/tags/upstream-$TAG"
+          gh release create "upstream-$TAG" \
+            dist/clipcascade-merged.apk \
+            --title "ClipCascade $TAG · 合并版（自动构建）" \
+            --notes-file notes.md
+
+  notify-failure:
+    name: 失败时开 issue
+    needs: [check, build]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.check.outputs.tag }}"
+          TITLE="自动合并失败：上游 $TAG"
+          if gh issue list --state open --search "in:title $TITLE" | grep -q .; then
+            echo "已有同名 issue，跳过"; exit 0
+          fi
+          gh issue create --title "$TITLE" --body "$(cat <<EOF
+          GitHub Actions 在合并上游 \`$TAG\` 时失败。
+
+          - 运行记录：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          常见原因：上游改了 \`AndroidManifest.xml\` 结构、改了 APK 内类名/事件名，
+          或 \`ClipCascade.apk\` 资产改名。修好后用「Run workflow」并勾选 \`force\` 重跑即可。
+          EOF
+          )"

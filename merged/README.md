@@ -16,8 +16,8 @@
 3. 官方兜底是用 `READ_LOGS` 读 logcat，Android 15+ 已失效；
 4. `appops set ... READ_CLIPBOARD allow` 也无效，拦截点在 `ClipboardService.clipboardAccessAllowed(...)`。
 
-之前的做法是外挂一个 LSPosed 模块（`../lsposed-hook/`）。这里改成**把同样的逻辑编进 App 自己**：
-LSPosed 剩下的唯一作用就是「在目标进程里跑我们的代码」，而这一层现在可以省掉。
+早期试过外挂 LSPosed 模块来改写 `clipboardAccessAllowed()`，但在 Android 17 / HyperOS 上模块**进不了 `system_server`**。
+改成**把逻辑编进 App 自己**：注入目标进程这件事由 `ContentProvider.onCreate()` 免费提供，LSPosed 这一层可以整个省掉。
 
 ## 实现
 

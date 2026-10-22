@@ -5,23 +5,7 @@
 
 ## 一、测试主机一览
 
-### 桌面端（桥接运行处）
-
-| 项 | 值 | 获取命令 |
-|---|---|---|
-| 发行版 | EndeavourOS（Arch Linux rolling） | `grep PRETTY_NAME /etc/os-release` |
-| 内核 | `7.2.9-arch1-1` | `uname -r` |
-| 架构 | x86_64 | `uname -m` |
-| 桌面环境 | GNOME 51 | `gnome-shell --version` |
-| 会话类型 | **Wayland**（`wayland-0`），另有 XWayland `:0` | `echo $XDG_SESSION_TYPE` |
-| Python | `/usr/bin/python3` = **3.14.8** | `/usr/bin/python3 -V` |
-| 剪贴板工具（主） | `wl-clipboard 1:2.3.0-1` | `pacman -Q wl-clipboard` |
-| 剪贴板工具（备） | `xclip` | `command -v xclip` |
-| adb | `Android Debug Bridge 1.0.41` | `adb version` |
-
-> 桌面端**不需要** root，也不需要图形界面特权。脚本通过 `subprocess` 调 `wl-copy` / `xclip`。
-
-### 手机端（被读取剪贴板的一侧）
+### 手机端（运行合并版 App）
 
 | 项 | 值 | 获取命令（adb shell） |
 |---|---|---|
@@ -30,40 +14,54 @@
 | Android 版本 | **17** | `getprop ro.build.version.release` |
 | API Level | **37** | `getprop ro.build.version.sdk` |
 | ROM | HyperOS `OS4.0` | `getprop ro.mi.os.version.name` |
-| Root | KernelSU（**本项目不需要，仅说明环境**） | `su -c id` |
-| adb 身份 | `uid=2000(shell)` | `id` |
+| Root | KernelSU | `su -c id` |
+| 剪贴板读取身份 | `uid=2000(shell)` | — |
 
-> 关键点：能读到剪贴板靠的是 **`uid=2000`（SHELL_UID）**，跟是否 root 无关。
-> 测试机虽然 root 了，但实现路径全程未使用 `su`。
+> 能读到剪贴板的身份是 **`uid=2000`（SHELL_UID）**，不是 root。以 root（uid 0）直接读反而会被 AppOps 拒绝 ——
+> 所以代码里用 `su 2000 -c` 降权。
+
+### 桌面端（只用于验证，不参与运行）
+
+| 项 | 值 | 获取命令 |
+|---|---|---|
+| 发行版 | EndeavourOS（Arch Linux rolling） | `grep PRETTY_NAME /etc/os-release` |
+| 内核 | `7.2.9-arch1-1` | `uname -r` |
+| 桌面环境 | GNOME 51，**Wayland**（`wayland-0`） | `echo $XDG_SESSION_TYPE` |
+| 剪贴板工具 | `wl-clipboard 2.3.0` | `pacman -Q wl-clipboard` |
+| adb | `Android Debug Bridge 1.0.41` | `adb version` |
 
 ### ClipCascade 自身版本
 
 | 组件 | 版本 |
 |---|---|
 | 服务端 | Docker 镜像 `sathvikrao/clipcascade:0.7.0` |
-| 桌面客户端 | Linux GUI `3.2.0`（Python，系统 Python 3.14 + venv） |
-| Android 客户端 | 包名 `com.clipcascade`，`versionName=1.0`（React Native 构建） |
-| 上游 `version.json` | release `3.2.0` / server `3.1.0` |
+| 桌面客户端 | Linux GUI `3.2.0` |
+| Android 客户端 | 包名 `com.clipcascade`，`versionName=1.0`（React Native / Hermes） |
+| 上游 Release | `3.2.0` |
 
-### 构建工具链（仅在需要重新编译 `clip.dex` 时用到）
+### 构建工具链
 
 | 项 | 值 |
 |---|---|
 | build-tools | **36.0.0**（`build-tools_r36_linux.zip` → 解压目录名 `android-16`） |
 | platform | **android-36**（`platform-36_r02.zip`） |
-| `javac` | JDK 17+，`-source 8 -target 8` |
-| `d8` | `--min-api 21` |
-| 产物 | `classes.dex` ≈ 6.2 KB |
+| apktool | **3.0.3** |
+| `javac` | JDK 17，`-source 8 -target 8` |
+| `d8` | `--min-api 26` |
+| 产物 | `classes3.dex` ≈ 6 KB；合并后 APK ≈ 89 MB（与原版几乎一致） |
 
 ## 二、验证方法（可复现）
 
-### 1. 方向正确性：手机 → 桌面
+### 1. 手机 → 桌面
+
+必须**全等比对**并按小步进轮询，不能 `sleep 3` 看一眼就算通过。
 
 ```bash
 export WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/1000
 D="adb -s <serial>"
 TOK="probe-$(date +%H%M%S)"
 
+# 用 uid 2000 写一条，等价于你在手机上复制
 $D shell "CLASSPATH=/data/local/tmp/clip.dex app_process /system/bin com.jay.readclip.Clip write '$TOK'"
 
 START=$(date +%s%N)
@@ -74,84 +72,54 @@ for i in $(seq 1 30); do
 done
 ```
 
-**判定标准**：必须**全等比对**（`[ "$CUR" = "$TOK" ]`），不能只 `sleep 3` 看一眼。
-按 150 ms 步进轮询才能量出真实延迟。
+关键前提：**App 必须已切到后台**（`input keyevent 3`），否则测的是前台路径，不能证明修复生效。
 
-### 2. 方向正确性：桌面 → 手机
+### 2. 桌面 → 手机
 
 ```bash
 printf 'reverse-probe-%s' "$(date +%H%M%S)" | wl-copy
-sleep 3
+sleep 4
 $D shell "CLASSPATH=/data/local/tmp/clip.dex app_process /system/bin com.jay.readclip.Clip read"
 # 输出形如 T:<base64>，解码即原文
 ```
 
-**注意**：这条路径**不经过本项目**，走的是 ClipCascade 自己的同步 + 手机 App 写入剪贴板。
-如果这一步失败，问题在 ClipCascade，不在本桥接。
+这条路径**不经过本项目的改动**，走的是 ClipCascade 自己的同步 + App 写入剪贴板。
+如果这一步失败，问题在 ClipCascade 或服务端，不在本项目。
 
-### 3. binder 是否被静默拒绝
-
-Android 在拒绝时会返回 `null` 而不抛异常，很容易误判成「内容为空」。用 `diag` 子命令在**同一进程内**
-写完立刻读回，能把「写失败」和「读被拒」区分开：
+### 3. 桥接是否真的在工作
 
 ```bash
-$D shell "CLASSPATH=/data/local/tmp/clip.dex app_process /system/bin com.jay.readclip.Clip diag 'test'"
+# 看桥接自己打的日志（Tag = CCBridge）
+adb logcat -s CCBridge
 ```
 
-### 4. 日志脱敏检查
+正常应看到 `dex deployed` / `react context ready` / `baseline recorded`，
+之后每次内容变化有 `emitted onClipboardChange (<n> chars)`。
+
+### 4. 产物静态冒烟
 
 ```bash
-journalctl --user -u clipcascade-phone-bridge | grep -c '<你测试用的明文>'
-# 期望输出 0
+BUILD_TOOLS=<build-tools目录> ./scripts/verify-merged.sh out/clipcascade-merged.apk
 ```
 
 ## 三、实测结果
-
-| 项 | 结果 |
-|---|---|
-| 手机 → 桌面延迟 | **247 ms**、**527 ms**（两轮，poll 500 ms） |
-| 桌面 → 手机 | 3 秒内到位 |
-| 中文 / 多字节 | ✅ 完整，无乱码 |
-| 长文本 | ✅ 8 KB 一次通过 |
-| 跨进程可见性 | ✅ 另一进程写入后，长驻 poll 能读到 |
-| 服务启动基线 | ✅ 只记录手机现状，**不覆盖**桌面已有内容 |
-| 锁屏状态 | ❌ 读返回空、写不可靠（系统行为，非缺陷） |
-
-## 三之二、方案 B（LSPosed 模块）实测
-
-环境同上，LSPosed **2.2.1 (7930)**，模块走 modern libxposed API 102（`minApiVersion=101`）。
-
-| 项 | 结果 |
-|---|---|
-| App 进程注入 | ✅ `enter pkg=com.clipcascade` |
-| `system_server` 注入 | ❌ legacy(api 82) 与 modern(api 102) **都不加载**本模块 |
-| 后台复制 → 桌面 | ✅ 约 1 s（子进程 poll 800 ms） |
-| 后台搁置 90 s 后再复制 | ✅ 仍工作（App 有前台服务，进程未被冻结） |
-| 中文长文本 / 连续 3 次快速复制 | ✅ 完整不丢 |
-| 桌面 → 手机 | ✅ 4 s 内 |
-| 同步回环 | ✅ 无 |
-| `ksud soft-reboot` 后 | ✅ App 由 `BOOT_COMPLETED` 自启，模块自动注入 |
-
-> **结论**：`system_server` 路线在这台机器上走不通，别在这上面浪费时间。原因未查明
-> （同机只有 `com.tiger.usbmanager` 等三个 modern 模块出现在 `(system)` 日志里），
-> 但这不影响方案 B —— 注入 App 进程就够。
-
-## 三之三、方案 A（合并版 APK）实测
 
 版本 `1.0-ccbridge`（`versionCode=2`），基于官方 `versionName=1.0` 合并。
 
 | 项 | 结果 |
 |---|---|
-| 后台复制 → 桌面 | ✅ 1 s 内（`emitted onClipboardChange`） |
+| 后台复制 → 桌面 | ✅ 1 s 内（子进程 poll 800 ms） |
+| 后台搁置 90 s 后再复制 | ✅ 仍工作（App 有前台服务，进程未被冻结） |
+| 中文长文本 / 连续 3 次快速复制 | ✅ 完整不丢 |
 | 桌面 → 手机 | ✅ 4 s 内 |
-| 中文 / 长文本 | ✅ 完整 |
+| 同步回环 | ✅ 无 |
 | `ksud soft-reboot` 后 | ✅ 打开 App 即自动恢复轮询（首次轮询子进程起来约 10 s） |
 | 登录态 / 加密密钥 | ✅ 迁移后同步正常，账号仍在 |
 | `install -r` 覆盖安装（同签名） | ✅ 数据保留 |
 | 包体积 | 89 MB，与原版一致（+14 KB） |
 | 开机自启 | ⚠️ 重装重置 HyperOS 自启动白名单，需手动开一次 |
 
-### 数据迁移的坑（实测记录）
+## 四、数据迁移的三个坑
 
 | 坑 | 表现 | 正解 |
 |---|---|---|
@@ -162,19 +130,18 @@ journalctl --user -u clipcascade-phone-bridge | grep -c '<你测试用的明文>
 **正确顺序**：备份 tar → 卸载 → 安装 → 先启动一次让系统建目录 → `force-stop` →
 `tar xzf … --strip-components=1 --no-same-owner` → `chown` 新 uid → `chcon` 根目录那串 context → 启动。
 
-## 四、未验证的组合
+## 五、未验证的组合
 
 以下**没有实测**，请勿当作支持承诺：
 
-- Android 10 / 11 / 12 / 13 / 14 / 15（原理相同，但各版本 `IClipboard` 方法签名可能不同 —— 本项目是按 4 参数签名写的，见下）
-- Windows / macOS 桌面端（本项目只做了 Linux）
+- Android 10 / 11 / 12 / 13 / 14 / 15 / 16（原理相同，但各版本 `IClipboard` 方法签名可能不同）
 - 非小米 / 非 HyperOS 的 ROM（OneUI、ColorOS、原生 AOSP 等）
-- 无 root 设备（按原理不需要 root，但没在纯原生设备上跑过）
-- 多台手机同时桥接
+- 无 root 环境（本项目离不开 root）
+- 多台手机同时使用同一账号
 
-## 五、关于 `IClipboard` 方法签名（移植时必看）
+## 六、关于 `IClipboard` 方法签名（移植时必看）
 
-本项目的代码按 **4 参数**签名写死：
+本项目的 `clip.dex` 按 **4 参数**签名写死：
 
 ```
 getPrimaryClip(String pkg, String attributionTag, int userId, int deviceId)
@@ -184,15 +151,9 @@ setPrimaryClip(ClipData, String pkg, String attributionTag, int userId, int devi
 网上常见的示例是 **3 参数**（少了 `deviceId`），在 API 37 上**直接匹配不到方法**，
 表现为 `if (sGet == null) throw ...` 或反射返回 `null`。
 
-移植到其他版本时，先枚举真实签名再改代码：
-
-```bash
-# 用一个打印 IClipboard 全部方法的探针类（参考 src/Clip.java 的反射初始化部分）
-$D shell "CLASSPATH=/data/local/tmp/probe.dex app_process /system/bin <你的探针类>"
-```
-
-`Clip.java` 里的做法是：遍历 `icb.getClass().getMethods()`，按**方法名 + 精确参数数组**
-（`Arrays.equals(m.getParameterTypes(), args)`) 匹配，而不是靠参数个数猜。
+移植到其他版本时，先枚举真实签名再改代码。`src/Clip.java` 的做法是遍历
+`icb.getClass().getMethods()`，按**方法名 + 精确参数数组**（`Arrays.equals(m.getParameterTypes(), args)`）
+匹配，而不是靠参数个数猜。
 
 ---
 

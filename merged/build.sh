@@ -14,7 +14,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 BT="${BUILD_TOOLS:-/home/jay/android-bt/android-16}"
 AJ="${ANDROID_JAR:-/home/jay/android-bt/platform/android-36/android.jar}"
 APKTOOL="${APKTOOL_JAR:-/tmp/apktool.jar}"
-KS="${KEYSTORE:-$HERE/../lsposed-hook/keystore.jks}"
+KS="${KEYSTORE:-$HERE/../keystore/ccbridge.jks}"
 VERSION_CODE="${VERSION_CODE:-2}"
 VERSION_NAME="${VERSION_NAME:-1.0-ccbridge}"
 

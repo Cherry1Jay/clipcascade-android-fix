@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.jay.cchook"
-    android:versionCode="7"
-    android:versionName="3.0">
-    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
-    <application android:label="ClipCascade 剪贴板放行" android:hasCode="true" />
-</manifest>

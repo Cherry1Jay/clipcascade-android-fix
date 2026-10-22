@@ -43,15 +43,15 @@
 
 | 风险 | 说明 |
 |---|---|
-| **剪贴板内容明文流转** | 方案 C 经 `adb` 通道原样传输；方案 A / B 在设备内部以明文经 `su` 子进程传递。ClipCascade 自身的端到端加密**只覆盖**「设备 → 服务端 → 设备」那一段，不覆盖本项目的这段链路。 |
-| **日志与凭据** | 本项目刻意只记录「字数 + 指纹」而**不记录原文**。但如果你自行修改脚本、或使用输入法剪贴板历史 / ClipCascade 服务端 / shell 历史等其他工具导致内容留痕，后果由你承担。**绝不建议通过剪贴板传递敏感凭据。** |
-| **Root 权限** | 方案 A / B 需要 `su`。本项目调用的形式是 `su 2000 -c …`（降权到 shell uid），但授予 root 本身即扩大攻击面。请仅使用可信来源的 Root 方案。 |
-| **安装非官方签名 APK** | 方案 A 的 APK 由作者自签，**与官方签名不同**。安装前必须卸载官方版，这会导致：登录态需靠自行备份恢复、HyperOS 等 ROM 的自启动白名单被重置、无法直接覆盖升级官方版本。 |
-| **官方升级不可用** | 方案 A 每次官方发版都要重新 `build.sh` 并重装，否则会停留在旧版本。作者无义务跟进上游更新。 |
-| **无线调试暴露端口** | 方案 C 若启用 `persist.adb.tcp.port=5555`，adb 会在网络接口上监听。请限制在内网或配合防火墙；不使用时关闭。 |
-| **轮询耗电** | 手机侧持续轮询会带来额外唤醒与耗电。 |
+| **安装的是非官方签名 APK** | 产物由作者自签（`keystore/ccbridge.jks`，口令公开），**与官方签名不同**。安装前必须卸载官方版，这会导致：登录态需自行备份迁移、HyperOS 等 ROM 的自启动白名单被重置、无法直接覆盖升级官方版本。 |
+| **官方更新不可直接安装** | 每次上游发版都要重新构建并重装，否则会停留在旧版本。作者无义务跟进上游更新（仓库内虽有自动流水线，但不保证长期可用）。 |
+| **剪贴板内容明文流转** | 在本项目新增的这段链路上内容不加密：以明文经 `su` 子进程从 uid 2000 的进程读出，再交给 App 的 JS 层。ClipCascade 自身的端到端加密**只覆盖**「设备 → 服务端 → 设备」那一段。 |
+| **日志与凭据** | 本项目不把剪贴板内容写进日志。但 App 自身、输入法剪贴板历史、ClipCascade 服务端等其他环节可能留痕，后果由你承担。**绝不建议通过剪贴板传递敏感凭据。** |
+| **Root 权限** | 本项目需要 `su`。虽然调用形式是 `su 2000 -c …`（降权到 shell uid），但授予 root 本身即扩大攻击面。请仅使用可信来源的 Root 方案。 |
+| **依赖 AOSP 实现细节** | 本案立足点是 `SHELL_UID` 的硬编码放行与特定 `IClipboard` 方法签名。**系统大版本更新后可能直接失效，且不会报错**，表现为「复制了没反应」。 |
+| **轮询耗电** | 手机侧 800 ms 一轮持续轮询，会带来额外唤醒与耗电。 |
 | **锁屏状态不可靠** | 锁屏时系统隐藏剪贴板，读取返回空、写入不报错但结果不确定，可能出现「看起来没同步」。 |
-| **可被 ROM 更新破坏** | 本项目依赖 `SHELL_UID` 放行这一 AOSP 实现细节，以及特定版本的 `IClipboard` 方法签名。系统大版本更新后可能直接失效且**不会报错**。 |
+| **数据迁移操作有风险** | 恢复备份时的 `chown` / `chcon` 命令若用错路径或 uid，可能导致 App 无法启动。请照 README 的步骤逐条执行，并在卸载前完成备份。 |
 
 ## 4. 合规与合法使用
 
@@ -72,7 +72,7 @@
 
 - 上游项目不对本项目提供任何支持、担保或认可；
 - **请勿**就本项目的问题到上游仓库提 issue；
-- 方案 A 的合并版 APK 是**作者修改的版本**，不是官方发布物。遇到任何异常，请先怀疑本项目而不是上游。
+- 本项目产出的合并版 APK 是**作者修改的版本**，不是官方发布物。遇到任何异常，请先怀疑本项目而不是上游。
 
 ## 6. 无技术支持义务
 
@@ -96,14 +96,16 @@ This project is provided **AS IS**, without warranty of any kind. You are solely
 for the legality of that use, and for any consequences — including credential or privacy leakage, data loss,
 device malfunction or bricking, voided warranty, or violation of any law, policy, or terms of service.
 
-Clipboard content transits this project's path in plaintext. ClipCascade's own end-to-end encryption covers only
-the device → server → device leg, **not** the path this project adds. **Never put tokens, passwords, or private keys
-on the clipboard for cross-device transfer.** This project intentionally logs only content length and a truncated
-hash, never the raw text — keep that invariant if you fork it.
+The output APK is a **modified build of the upstream ClipCascade Android app**, signed with a project-local key.
+It is **not** an official release, cannot be updated over-the-air from upstream, and requires uninstalling the
+official app first (which drops your login state unless you migrate the app data yourself).
 
-Two of the three approaches require root. The merged APK (approach A) is a **modified build of the upstream
-ClipCascade Android app**, signed with a project-local key: it is **not** an official release, cannot be
-updated over-the-air from upstream, and requires uninstalling the official app first.
+Clipboard content transits the added code path in plaintext. ClipCascade's own end-to-end encryption covers only
+the device → server → device leg, **not** the path this project adds. **Never put tokens, passwords, or private
+keys on the clipboard for cross-device transfer.**
+
+The approach relies on two AOSP implementation details (`SHELL_UID` clipboard exemption and a specific
+`IClipboard` method signature) and **may silently break after a system upgrade**.
 
 This is an independent third-party tool. It is **not affiliated with, endorsed by, or supported by** the upstream
 ClipCascade project or its author. Do not file issues about this project upstream.
