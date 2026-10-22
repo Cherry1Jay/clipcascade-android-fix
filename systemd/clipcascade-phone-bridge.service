@@ -1,0 +1,23 @@
+[Unit]
+Description=ClipCascade phone -> desktop clipboard bridge (reads phone clipboard via adb)
+# 跟随图形会话：图形会话起来后才需要剪贴板
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# 用系统 python：systemd user 环境的 PATH 很干净；本脚本只依赖标准库，无需虚拟环境
+ExecStart=/usr/bin/python3 %h/.local/share/clipcascade/phone_bridge.py
+Restart=always
+RestartSec=5
+
+# ---- 按你的环境改这两行（留空则自动发现）----
+# 无线 adb 地址，形如 192.168.1.23:5555
+Environment=BRIDGE_WIFI_ADDR=
+# USB 序列号，即 adb devices 第一列
+Environment=BRIDGE_USB_SERIAL=
+# 轮询间隔（毫秒）：越小越灵敏，越耗电
+Environment=BRIDGE_POLL_MS=500
+
+[Install]
+WantedBy=default.target
