@@ -1,7 +1,11 @@
-# merged —— 单一 APK 版本（不依赖 LSPosed）
+# 方案 A：合并版 APK（推荐）
 
 把后台剪贴板桥**直接编进 ClipCascade 官方 APK**，安装后只有一个软件包：
 不需要 LSPosed 模块、不需要 adb、不需要常开电脑。
+
+> ⚠️ **GPL-3.0 修改声明**：本目录产物是在上游 ClipCascade 手机端 APK 基础上修改得到的
+> **修改版本（modified version）**，不是独立作品。修改者 **FairyJJ**，日期 **2026-10-22**。
+> 逐条改动、对应源码位置与分发条件见 [../NOTICE.md](../NOTICE.md) 第二节。
 
 ## 为什么这么做
 

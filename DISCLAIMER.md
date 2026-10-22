@@ -4,6 +4,9 @@
 下载、安装、运行或以任何方式使用本项目，即视为你已阅读、理解并接受下列全部条款。
 如果你不同意其中任何一条，请立即停止使用并删除本项目。
 
+> 本免责声明是**责任与风险提示**，不构成对 [GPL-3.0](LICENSE) 所授予权利的额外限制。
+> 与许可条款冲突时，以 GPL-3.0 为准（见 [NOTICE](NOTICE.md) 第六节）。
+
 ---
 
 ## 1. 无任何担保
@@ -13,7 +16,7 @@
 
 作者不保证本项目：
 
-- 与你的设备型号、系统版本、ROM、ClipCascade 版本兼容；
+- 与你的设备型号、系统版本、ROM、Root 方案、ClipCascade 版本兼容；
 - 在任何情况下不丢失、不篡改、不重复同步剪贴板内容；
 - 不存在缺陷、漏洞或未预期的行为；
 - 能够满足你的任何特定功能或合规要求。
@@ -26,7 +29,9 @@
 - 数据丢失、数据损坏、剪贴板内容错乱或被覆盖；
 - **凭据泄露**（token、密码、验证码、私钥、API key 等）；
 - 隐私泄露、商业秘密泄露、通信内容外泄；
-- 设备异常、系统不稳定、应用崩溃、电池损耗；
+- **设备无法开机、系统不稳定、应用崩溃、数据分区损坏**（尤其是执行 `su`、重签名安装、
+  修改 `SELinux` 上下文等操作时）；
+- **保修失效**、厂商服务拒绝、Root 导致的系统完整性校验失败；
 - 业务中断、利润损失、商誉损失；
 - 因本项目的使用而导致的任何第三方索赔。
 
@@ -38,18 +43,22 @@
 
 | 风险 | 说明 |
 |---|---|
-| **剪贴板内容明文传输** | 内容经 `adb` 通道原样传到桌面并写入系统剪贴板，未做额外加密。同机上可执行 `adb` 的进程均可能读取。 |
-| **日志与凭据** | 本项目刻意只记录「字数 + 指纹」而**不记录原文**。但如果你自行修改脚本、或使用其他工具（输入法剪贴板历史、ClipCascade 服务端、shell 历史、`journalctl` 之外的日志采集）导致内容留痕，后果由你承担。**绝不建议通过剪贴板传递敏感凭据。** |
-| **无线调试暴露端口** | `persist.adb.tcp.port=5555` 会让 adb 在网络接口上监听。请限制在内网，或配合防火墙；不使用时关闭。 |
+| **剪贴板内容明文流转** | 方案 C 经 `adb` 通道原样传输；方案 A / B 在设备内部以明文经 `su` 子进程传递。ClipCascade 自身的端到端加密**只覆盖**「设备 → 服务端 → 设备」那一段，不覆盖本项目的这段链路。 |
+| **日志与凭据** | 本项目刻意只记录「字数 + 指纹」而**不记录原文**。但如果你自行修改脚本、或使用输入法剪贴板历史 / ClipCascade 服务端 / shell 历史等其他工具导致内容留痕，后果由你承担。**绝不建议通过剪贴板传递敏感凭据。** |
+| **Root 权限** | 方案 A / B 需要 `su`。本项目调用的形式是 `su 2000 -c …`（降权到 shell uid），但授予 root 本身即扩大攻击面。请仅使用可信来源的 Root 方案。 |
+| **安装非官方签名 APK** | 方案 A 的 APK 由作者自签，**与官方签名不同**。安装前必须卸载官方版，这会导致：登录态需靠自行备份恢复、HyperOS 等 ROM 的自启动白名单被重置、无法直接覆盖升级官方版本。 |
+| **官方升级不可用** | 方案 A 每次官方发版都要重新 `build.sh` 并重装，否则会停留在旧版本。作者无义务跟进上游更新。 |
+| **无线调试暴露端口** | 方案 C 若启用 `persist.adb.tcp.port=5555`，adb 会在网络接口上监听。请限制在内网或配合防火墙；不使用时关闭。 |
 | **轮询耗电** | 手机侧持续轮询会带来额外唤醒与耗电。 |
 | **锁屏状态不可靠** | 锁屏时系统隐藏剪贴板，读取返回空、写入不报错但结果不确定，可能出现「看起来没同步」。 |
+| **可被 ROM 更新破坏** | 本项目依赖 `SHELL_UID` 放行这一 AOSP 实现细节，以及特定版本的 `IClipboard` 方法签名。系统大版本更新后可能直接失效且**不会报错**。 |
 
 ## 4. 合规与合法使用
 
 你**自行负责**确保使用行为符合：
 
 - 所在国家或地区的**法律法规**（包括但不限于网络安全、数据安全、个人信息保护相关法律）；
-- 你的**雇主或组织的内部政策**；
+- 你的**雇主或组织的内部政策**（很多单位禁止在办公设备上使用 Root 或非官方签名应用）；
 - 你所用设备与服务（手机厂商、云服务、ClipCascade 服务端等）的**服务条款**；
 - 任何适用于剪贴板内容（可能包含他人个人信息、商业秘密）的**授权与同意要求**。
 
@@ -63,17 +72,17 @@
 
 - 上游项目不对本项目提供任何支持、担保或认可；
 - **请勿**就本项目的问题到上游仓库提 issue；
-- 上游的许可（GPL-3.0）与本项目的许可相互独立，详见 [NOTICE](NOTICE)。
+- 方案 A 的合并版 APK 是**作者修改的版本**，不是官方发布物。遇到任何异常，请先怀疑本项目而不是上游。
 
 ## 6. 无技术支持义务
 
 作者没有义务提供技术支持、缺陷修复、版本更新或问题答复。任何形式的帮助均属**自愿且无担保**，
 不构成对本条款的豁免。
 
-## 7. 协议与条款变更
+## 7. 条款变更与可分割性
 
 作者可在不另行通知的情况下修改本项目及本免责声明。你继续使用即视为接受修改后的条款。
-本条款的可分割性：若任一条款被认定无效或不可执行，其余条款仍完整有效。
+若任一条款被认定无效或不可执行，其余条款仍完整有效。
 
 ---
 
@@ -84,15 +93,23 @@
 ## English (short version)
 
 This project is provided **AS IS**, without warranty of any kind. You are solely responsible for how you use it,
-for the legality of that use, and for any consequences — including credential or privacy leakage, data loss, device
-malfunction, or violation of any law, policy, or terms of service.
+for the legality of that use, and for any consequences — including credential or privacy leakage, data loss,
+device malfunction or bricking, voided warranty, or violation of any law, policy, or terms of service.
 
-Clipboard content transits the `adb` channel in plaintext. **Never put tokens, passwords, or private keys on the
-clipboard for cross-device transfer.** This project intentionally logs only content length and a truncated hash,
-never the raw text — keep that invariant if you fork it.
+Clipboard content transits this project's path in plaintext. ClipCascade's own end-to-end encryption covers only
+the device → server → device leg, **not** the path this project adds. **Never put tokens, passwords, or private keys
+on the clipboard for cross-device transfer.** This project intentionally logs only content length and a truncated
+hash, never the raw text — keep that invariant if you fork it.
+
+Two of the three approaches require root. The merged APK (approach A) is a **modified build of the upstream
+ClipCascade Android app**, signed with a project-local key: it is **not** an official release, cannot be
+updated over-the-air from upstream, and requires uninstalling the official app first.
 
 This is an independent third-party tool. It is **not affiliated with, endorsed by, or supported by** the upstream
 ClipCascade project or its author. Do not file issues about this project upstream.
 
 The authors accept no liability for any direct, indirect, incidental, special, punitive, or consequential damages
 arising from the use of, or inability to use, this software — even if advised of the possibility of such damages.
+
+This disclaimer does **not** limit any rights granted to you by the GNU GPL v3.0; where they conflict, the license
+prevails. See [NOTICE](NOTICE.md) for attribution and the modification statement required by GPL-3.0 §5(a).

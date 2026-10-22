@@ -1,7 +1,10 @@
-# LSPosed 模块：让 ClipCascade 在后台同步剪贴板
+# 方案 B：LSPosed 模块
 
-这是 `clipcascade-phone-bridge` 的**第二条路线**：不再用 adb 做运行通道，而是在
-ClipCascade App 进程内用 LSPosed 模块把剪贴板读取接管掉，让 App 自己走它原有的加密上行。
+在 ClipCascade **App 进程内**用 LSPosed 模块接管剪贴板读取，让 App 自己走它原有的加密上行。
+不改官方 APK，官方发版可照常升级。
+
+> 如果你不介意改 APK，优先用 [`../merged/`](../merged/) 的合并版 —— 只需一个软件包，少一层依赖。
+> 本模块保留给「不想重签名、想跟着官方升级」的场景。
 
 ## 为什么 adb 那条路被放弃
 

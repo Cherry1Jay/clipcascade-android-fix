@@ -117,6 +117,51 @@ journalctl --user -u clipcascade-phone-bridge | grep -c '<你测试用的明文>
 | 服务启动基线 | ✅ 只记录手机现状，**不覆盖**桌面已有内容 |
 | 锁屏状态 | ❌ 读返回空、写不可靠（系统行为，非缺陷） |
 
+## 三之二、方案 B（LSPosed 模块）实测
+
+环境同上，LSPosed **2.2.1 (7930)**，模块走 modern libxposed API 102（`minApiVersion=101`）。
+
+| 项 | 结果 |
+|---|---|
+| App 进程注入 | ✅ `enter pkg=com.clipcascade` |
+| `system_server` 注入 | ❌ legacy(api 82) 与 modern(api 102) **都不加载**本模块 |
+| 后台复制 → 桌面 | ✅ 约 1 s（子进程 poll 800 ms） |
+| 后台搁置 90 s 后再复制 | ✅ 仍工作（App 有前台服务，进程未被冻结） |
+| 中文长文本 / 连续 3 次快速复制 | ✅ 完整不丢 |
+| 桌面 → 手机 | ✅ 4 s 内 |
+| 同步回环 | ✅ 无 |
+| `ksud soft-reboot` 后 | ✅ App 由 `BOOT_COMPLETED` 自启，模块自动注入 |
+
+> **结论**：`system_server` 路线在这台机器上走不通，别在这上面浪费时间。原因未查明
+> （同机只有 `com.tiger.usbmanager` 等三个 modern 模块出现在 `(system)` 日志里），
+> 但这不影响方案 B —— 注入 App 进程就够。
+
+## 三之三、方案 A（合并版 APK）实测
+
+版本 `1.0-ccbridge`（`versionCode=2`），基于官方 `versionName=1.0` 合并。
+
+| 项 | 结果 |
+|---|---|
+| 后台复制 → 桌面 | ✅ 1 s 内（`emitted onClipboardChange`） |
+| 桌面 → 手机 | ✅ 4 s 内 |
+| 中文 / 长文本 | ✅ 完整 |
+| `ksud soft-reboot` 后 | ✅ 打开 App 即自动恢复轮询（首次轮询子进程起来约 10 s） |
+| 登录态 / 加密密钥 | ✅ 迁移后同步正常，账号仍在 |
+| `install -r` 覆盖安装（同签名） | ✅ 数据保留 |
+| 包体积 | 89 MB，与原版一致（+14 KB） |
+| 开机自启 | ⚠️ 重装重置 HyperOS 自启动白名单，需手动开一次 |
+
+### 数据迁移的坑（实测记录）
+
+| 坑 | 表现 | 正解 |
+|---|---|---|
+| 重装后 uid 变化（10584 → 10587） | WorkManager 报 `file system on the device is in a bad state`，provider 写文件 `EACCES` | `chown -R <新uid>:<新uid>` |
+| `restorecon` 补不回 SELinux per-app category | 同上 | `chcon -R u:object_r:app_data_file:s0:c75,c258,c512,c768`；toybox 的 `chcon` **不支持 `--reference`** |
+| `rm -rf /data/data/<pkg>` 后不重装 | App 直接起不来，`pm clear` 也救不回（PMS 的 `ceDataInode` 对不上） | 只能卸载重装 |
+
+**正确顺序**：备份 tar → 卸载 → 安装 → 先启动一次让系统建目录 → `force-stop` →
+`tar xzf … --strip-components=1 --no-same-owner` → `chown` 新 uid → `chcon` 根目录那串 context → 启动。
+
 ## 四、未验证的组合
 
 以下**没有实测**，请勿当作支持承诺：
