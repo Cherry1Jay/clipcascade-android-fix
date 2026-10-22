@@ -153,6 +153,18 @@ check（比对上游 tag 与 upstream-* 标签）
 > CI 用的是仓库内的自签密钥（`keystore/ccbridge.jks`，口令 `android`）。它是**公开的调试密钥**，
 > 只为保证「本地构建」与「CI 构建」签名一致、能互相覆盖安装。要自己用就换成你的密钥并设 `KEYSTORE`。
 
+### 发布版本怎么读
+
+| 标签 | 来源 | 说明 |
+|---|---|---|
+| `upstream-<tag>` | CI 自动 | **装这个**。跟随上游 release tag，例如 `upstream-3.2.0` |
+| `v2.0.0` | 手工构建 | 最初在真机上验证通过的那一版，已被 `upstream-*` 取代，保留作记录 |
+
+`versionName` 规则：手工版 `1.0-ccbridge`；CI 版 `ccbridge.<上游tag>`。
+`versionCode`：手工版是 `2`，CI 版为「日期 × 100 + 运行号」（如 `26102201`），保证单调递增、可覆盖安装。
+
+> 你自己改代码重建时，建议设 `VERSION_CODE` 为一个比当前已装版本更大的值，否则 `adb install -r` 会报版本降级。
+
 ---
 
 ## 支持范围
