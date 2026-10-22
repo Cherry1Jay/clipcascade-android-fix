@@ -2,3 +2,4 @@
 __pycache__/
 .bridge-last-device
 *.log
+lsposed-hook/build/
