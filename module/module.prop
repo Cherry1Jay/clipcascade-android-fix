@@ -1,0 +1,6 @@
+id=clipcascade_adbd
+name=ClipCascade adb 通道保活
+version=v1.0
+versionCode=1
+author=FairyJJ
+description=开机确保 adbd 监听 TCP 5555，桌面端 ClipCascade 手机剪贴板桥无需插线即可自动重连

@@ -90,7 +90,8 @@ def mdns_candidates():
     found = []
     for line in out.splitlines():
         low = line.lower()
-        if "_adb" not in low or "pandora" not in low:
+        # 只认 adb 服务名，不再要求设备名匹配（换机/改名后依然能发现）
+        if "_adb" not in low:
             continue
         parts = line.split()
         if parts and ":" in parts[-1]:
@@ -98,9 +99,26 @@ def mdns_candidates():
     return found
 
 
+def online_devices():
+    """adb devices 中已经在线的 serial。USB 直连最稳，排最前。"""
+    try:
+        out = adb("devices", timeout=8).stdout
+    except (subprocess.TimeoutExpired, OSError):
+        return []
+    found = []
+    for line in out.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == "device":
+            found.append(parts[0])
+    # 不含 ":" 的是 USB 序列号，优先于无线地址
+    found.sort(key=lambda s: (":" in s, s))
+    return found
+
+
 def candidates():
     seen, out = set(), []
-    for c in (WIFI_ADDR, *mdns_candidates(), USB_SERIAL, read_last_device()):
+    for c in (*online_devices(), USB_SERIAL, WIFI_ADDR,
+              *mdns_candidates(), read_last_device()):
         if c and c not in seen:
             seen.add(c)
             out.append(c)
@@ -251,8 +269,23 @@ def run_session(serial):
         log.warning("轮询未就绪就退出（%s）", serial)
 
 
+def notify(summary, body, urgency="normal"):
+    """桌面通知。断线时主动提示，避免"复制了没反应"却没人知道通道已断。"""
+    if not shutil.which("notify-send"):
+        return
+    try:
+        subprocess.run(["notify-send", "-a", "ClipCascade", "-u", urgency,
+                        "-t", "8000", summary, body],
+                       timeout=5, env=SESSION_ENV,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+
+
 def main():
     backoff = 3
+    offline_since = None
+    notified = False
     while True:
         for serial in candidates():
             s = connect(serial)
@@ -260,6 +293,12 @@ def main():
                 continue
             if not ensure_dex(s):
                 continue
+            offline_since = None
+            backoff = 3
+            if notified:
+                notify("ClipCascade 手机桥已恢复", "手机剪贴板同步重新连上（%s）" % s, "low")
+                log.info("通道恢复：%s", s)
+                notified = False
             try:
                 run_session(s)
             except KeyboardInterrupt:
@@ -270,13 +309,19 @@ def main():
             log.warning("%s 会话结束，%ds 后重连", s, backoff)
             time.sleep(backoff)
             backoff = min(backoff * 2, 30)
-        else:
-            log.warning("没有可用设备（试过 %s），%ds 后重试",
-                        ", ".join(candidates()), backoff)
-            time.sleep(backoff)
-            backoff = min(backoff * 2, 30)
-            continue
-        backoff = 3
+
+        if offline_since is None:
+            offline_since = time.time()
+        elif not notified and time.time() - offline_since >= 90:
+            notify("ClipCascade 手机桥已断开",
+                   "手机复制的内容暂时同步不过来：请检查数据线或手机端无线调试（5555）",
+                   "critical")
+            notified = True
+            log.warning("已离线 %.0fs，已发出断开提醒", time.time() - offline_since)
+        log.warning("没有可用设备（试过 %s），%ds 后重试",
+                    ", ".join(candidates()), backoff)
+        time.sleep(backoff)
+        backoff = min(backoff * 2, 30)
 
 
 if __name__ == "__main__":

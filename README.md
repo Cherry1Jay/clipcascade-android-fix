@@ -200,6 +200,30 @@ adb shell su -c 'setprop persist.adb.tcp.port ""'   # 关掉无线调试
 
 详见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。
 
+## 通道自愈（v1.1）
+
+桥接链路依赖 `adb`，而 `adb` 是最容易莫名其妙断掉的一环（拔线、无线调试被系统关掉、手机重启）。
+桌面端与手机端各加了一道保障：
+
+| 位置 | 措施 | 作用 |
+|---|---|---|
+| 手机 | `setprop persist.adb.tcp.port 5555` | 重启后 adbd 自动监听 5555，无需再进开发者选项点「无线调试」 |
+| 手机 | KernelSU 模块 `module/` | 开机早期补写端口属性；若 5555 仍未监听则 `start adbd` 拉起 |
+| 桌面 | 候选顺序改为「在线设备（USB 优先）→ 无线 → mDNS → 上次设备」 | 插着线时走 USB，最稳也最快，不再傻等无线地址 |
+| 桌面 | mDNS 匹配放宽到任意 `_adb*` 服务 | 手机改名/换机后仍能自动发现 |
+| 桌面 | 离线 ≥90s 弹桌面通知，恢复时再弹一次 | 通道断了立刻知道，不再是"复制了没反应"的静默失败 |
+
+安装手机端模块：
+
+```bash
+adb push module/module.prop module/post-fs-data.sh module/service.sh /data/local/tmp/
+adb shell su -c 'mkdir -p /data/adb/modules/clipcascade_adbd && \
+  cp -f /data/local/tmp/module.prop /data/local/tmp/post-fs-data.sh /data/local/tmp/service.sh \
+  /data/adb/modules/clipcascade_adbd/ && chmod 755 /data/adb/modules/clipcascade_adbd/*.sh'
+```
+
+需要 root（KernelSU/Magisk）；不装模块也能用，只是手机重启后可能要手动重建一次 adb 通道。
+
 ## 致谢
 
 - [Sathvik Rao](https://github.com/Sathvik-Rao) / [ClipCascade](https://github.com/Sathvik-Rao/ClipCascade) —— 跨设备剪贴板同步与加密的底座。
