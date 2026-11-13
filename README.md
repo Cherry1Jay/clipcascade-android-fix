@@ -248,3 +248,24 @@ adb install <官方 ClipCascade.apk>
 ---
 
 *本项目按「现状」提供，不附带任何担保。使用即表示接受 [DISCLAIMER](DISCLAIMER.md) 全部条款。*
+
+<!-- donate:start -->
+---
+
+## 支持作者 / Support the author
+
+本项目**完全免费**，不设付费版、不做功能阉割，也没有任何强制署名或引流要求。你可以在遵守许可证的前提下自由使用、修改和分发。
+
+如果它确实帮到了你，欢迎**自愿打赏**，金额随意；不打赏完全不影响使用，也不影响后续更新。
+
+<table>
+  <tr>
+    <td align="center"><b>支付宝（推荐）</b><br>
+      <img src="assets/donate/alipay.jpg" width="240" alt="支付宝收款码"></td>
+    <td align="center"><b>微信支付</b><br>
+      <img src="assets/donate/wechat.jpg" width="240" alt="微信收款码"></td>
+  </tr>
+</table>
+
+<sub>Free to use — this project is and stays free. A voluntary tip is appreciated, never required.</sub>
+<!-- donate:end -->
